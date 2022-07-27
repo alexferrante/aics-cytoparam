@@ -82,6 +82,7 @@ def parameterization_from_shcoeffs(
     coeffs_nuc: Dict,
     centroid_nuc: List,
     nisos: List,
+    use_spherical_rep: bool,
     images_to_probe: Optional[List] = None,
 ):
 
@@ -130,6 +131,7 @@ def parameterization_from_shcoeffs(
         centroid_nuc=centroid_nuc,
         nisos=nisos,
         images_to_probe=images_to_probe,
+        use_spherical_rep=use_spherical_rep,
     )
 
     return representations
@@ -295,6 +297,7 @@ def cellular_mapping(
     coeffs_nuc: Dict,
     centroid_nuc: List,
     nisos: List,
+    use_spherical_rep: bool,
     images_to_probe: Optional[List] = None,
 ):
 
@@ -361,9 +364,14 @@ def cellular_mapping(
         mesh.GetPoints().SetData(numpy_to_vtk(coords))
 
         # Probe images of interest to create representation
-        rep = get_intensity_representation(
-            polydata=mesh, images_to_probe=images_to_probe
-        )
+        if not use_spherical_rep:
+            rep = get_intensity_representation(
+                polydata=mesh, images_to_probe=images_to_probe
+            )
+        else:
+            rep = get_spherical_intensity_representation(
+                polydata=mesh, images_to_probe=images_to_probe
+            )
 
         representations.append(rep)
 
@@ -388,6 +396,81 @@ def cellular_mapping(
     code = AICSImage(code, channel_names=ch_names)
 
     return code
+
+
+def get_spherical_intensity_representation(polydata: vtk.vtkPolyData, images_to_probe: List):
+
+    """
+    This function probes the location of 3D mesh points in a list
+    of 3D images.
+
+    Parameters
+    --------------------
+    polydata: vtkPolyData
+        Polygonal 3D mesh
+    images_to_probe : list of tuples
+        [(a, b)] where a's are names for the image to be probed and b's are
+        expected to be 3D ndarrays representing the image to be probed. The
+        images are assumed to be previously registered to the cell and
+        nuclear images used to calculate the spherical harmonics
+        coefficients.
+
+    Returns
+    -------
+    result: list of ndarrays
+        [(a,b)] where a is the probed image name and b is a 1d array with
+        the corresponding probed intensities.
+    """
+
+    def cart2sph(x, y, z):
+        hxy = np.hypot(x, y)
+        r = np.hypot(hxy, z)
+        el = np.arctan2(z, hxy)
+        az = np.arctan2(y, x)
+        return az, el, r
+
+    def batch_cartesian_to_spherical(xyz):
+        sph_coords = []
+        for x,y,z in xyz:
+            r,p,t = cart2sph(x,y,z)
+            sph_coords.append([r,p,t])
+        sph_coords = np.array(sph_coords)
+        return sph_coords
+
+    representation = {}
+    coords = vtk_to_numpy(polydata.GetPoints().GetData())
+    x, y, z = [coords[:, i].astype(int) for i in range(3)]
+    # Convert xyz coordinates to sph coordinates
+    xyz = np.round(coords, 2)
+    sph_coords = batch_cartesian_to_spherical(xyz)
+    sph_coords_unique, unique_indices, unique_counts = np.unique(sph_coords, axis=0, return_index=True, return_counts=True)
+    for name, img in images_to_probe:
+        x_clip = np.clip(x, 0, img.shape[2] - 1)
+        y_clip = np.clip(y, 0, img.shape[1] - 1)
+        z_clip = np.clip(z, 0, img.shape[0] - 1)
+
+        intensities = img[z_clip,y_clip,x_clip]
+        padded_intensities = -1 * np.ones((coords.shape[0]))
+        sph_intensities = np.ones((sph_coords_unique.shape[0]))
+
+        for i in range(len(sph_coords_unique)):
+            if unique_counts[i] > 1:
+                # Get indices of xyz coords that map to the same spherical coords
+                matched_indices = np.where((sph_coords ==sph_coords_unique[i]).all(axis=1))[0]
+                avg_intensity = np.average(intensities[matched_indices]).astype(int)
+                sph_intensities[i] = avg_intensity
+            else:
+                sph_intensities[i] = intensities[unique_indices[i]]   
+                
+        # Consistent sorting based on spherical coordinates
+        # TODO: is there another way to do this? 
+        sph_argsort = np.lexsort((sph_coords_unique[:,0], sph_coords_unique[:,1], sph_coords_unique[:,2]))
+        sorted_sph_coords = sph_coords_unique[sph_argsort]
+        sorted_intensities = sph_intensities[sph_argsort]
+        padded_intensities[:sph_coords_unique.shape[0]] = sorted_intensities
+        representation[name] = padded_intensities
+    return representation
+
 
 
 def get_intensity_representation(polydata: vtk.vtkPolyData, images_to_probe: List):
