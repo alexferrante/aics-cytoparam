@@ -415,6 +415,11 @@ def cellular_mapping(
 
     for i, rep in enumerate(representations):
         for ch, (ch_name, data) in enumerate(rep.items()):
+            if data.shape[0] != max_npts:
+                print(data.shape)
+                padded_data = np.zeros((max_npts))
+                padded_data[:data.shape[0]] = data
+                data = padded_data
             code[ch, 0, i, :] = data
 
     # Save channel names
