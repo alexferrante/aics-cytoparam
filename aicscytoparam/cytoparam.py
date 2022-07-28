@@ -6,6 +6,7 @@ from aicsshparam import shparam, shtools
 from scipy import interpolate as spinterp
 from typing import Optional, List, Dict, Tuple
 from vtk.util.numpy_support import vtk_to_numpy, numpy_to_vtk
+from skimage import transform as sktrans
 
 
 def parameterize_image_coordinates(
@@ -83,6 +84,7 @@ def parameterization_from_shcoeffs(
     centroid_nuc: List,
     nisos: List,
     use_spherical_rep: bool,
+    use_prog_sampling: bool,
     images_to_probe: Optional[List] = None,
 ):
 
@@ -132,6 +134,7 @@ def parameterization_from_shcoeffs(
         nisos=nisos,
         images_to_probe=images_to_probe,
         use_spherical_rep=use_spherical_rep,
+        use_prog_sampling=use_prog_sampling,
     )
 
     return representations
@@ -298,6 +301,7 @@ def cellular_mapping(
     centroid_nuc: List,
     nisos: List,
     use_spherical_rep: bool,
+    use_prog_sampling: bool,
     images_to_probe: Optional[List] = None,
 ):
 
@@ -350,12 +354,38 @@ def cellular_mapping(
         nisos=nisos,
     )
 
+    if use_prog_sampling:
+        idx = 0
+        x = 2
+        y = 3
+        down_map = {}
+        while idx != 65:
+            down_map[idx] = (x,y) 
+            if idx%2 == 0 and idx < 20:
+                x = x+1
+            if idx >= 20:
+                x = x+1
+            if idx%4==0 and (x+1 > y):
+                y = x+1
+            if idx%5 or idx%6:
+                y = y+1
+            if idx == 0:
+                x = 5
+                y = 8
+            idx = idx + 1
+
     representations = []
     for i, iso_value in enumerate(np.linspace(0.0, 1.0, 1 + np.sum(nisos))):
 
         # Get coeffs at given fixed point
         coeffs = coeffs_interpolator(iso_value).reshape(2, lmax + 1, lmax + 1)
-        mesh, grid = shtools.get_reconstruction_from_coeffs(coeffs, lrec=2 * lmax)
+
+        if not use_prog_sampling:
+            mesh, grid = shtools.get_reconstruction_from_coeffs(coeffs, lrec=2 * lmax)
+        else:
+            grid = shtools.get_grid_from_coeffs(coeffs, lrec=2 * lmax)
+            grid_downsample = sktrans.resize(grid, output_shape=down_map[i], preserve_range=True)
+            mesh = shtools.get_reconstruction_from_grid(grid_downsample)
 
         # Translate mesh to interpolated location
         centroid = centroids_interpolator(iso_value).reshape(1, 3)
@@ -376,11 +406,11 @@ def cellular_mapping(
         representations.append(rep)
 
     # Number of points in the mesh
-    npts = mesh.GetNumberOfPoints()
+    max_npts = mesh.GetNumberOfPoints()
 
-    # Create a matrix to store the rpresentations
+    # Create a matrix to store the representations
     code = np.zeros(
-        (len(images_to_probe), 1, len(representations), npts), dtype=np.float32
+        (len(images_to_probe), 1, len(representations), max_npts), dtype=np.float32
     )
 
     for i, rep in enumerate(representations):
@@ -441,7 +471,7 @@ def get_spherical_intensity_representation(polydata: vtk.vtkPolyData, images_to_
     coords = vtk_to_numpy(polydata.GetPoints().GetData())
     x, y, z = [coords[:, i].astype(int) for i in range(3)]
     # Convert xyz coordinates to sph coordinates
-    xyz = np.round(coords, 2)
+    xyz = np.round(coords, 1)
     sph_coords = batch_cartesian_to_spherical(xyz)
     sph_coords_unique, unique_indices, unique_counts = np.unique(sph_coords, axis=0, return_index=True, return_counts=True)
     for name, img in images_to_probe:
@@ -456,7 +486,7 @@ def get_spherical_intensity_representation(polydata: vtk.vtkPolyData, images_to_
         for i in range(len(sph_coords_unique)):
             if unique_counts[i] > 1:
                 # Get indices of xyz coords that map to the same spherical coords
-                matched_indices = np.where((sph_coords ==sph_coords_unique[i]).all(axis=1))[0]
+                matched_indices = np.where((sph_coords == sph_coords_unique[i]).all(axis=1))[0]
                 avg_intensity = np.average(intensities[matched_indices]).astype(int)
                 sph_intensities[i] = avg_intensity
             else:
