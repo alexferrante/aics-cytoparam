@@ -294,6 +294,7 @@ def get_mapping_coordinates(
                 x = 5
                 y = 8
             idx = idx + 1
+        max_n_pts = 4004
 
     x_coords, y_coords, z_coords = [], [], []
     for i, iso_value in enumerate(np.linspace(0.0, 1.0, 1 + np.sum(nisos))):
@@ -312,6 +313,11 @@ def get_mapping_coordinates(
         coords = vtk_to_numpy(mesh.GetPoints().GetData())
 
         coords += centroids_interpolator(iso_value).reshape(1, -1)
+
+        if use_prog_sampling and len(coords) < max_n_pts:
+            padded_coords = np.zeros((max_n_pts, 3))
+            padded_coords[:len(coords)] = coords
+            coords = padded_coords
 
         x_coords.append(coords[:, 0])
         y_coords.append(coords[:, 1])
@@ -444,7 +450,6 @@ def cellular_mapping(
     for i, rep in enumerate(representations):
         for ch, (ch_name, data) in enumerate(rep.items()):
             if data.shape[0] != max_npts:
-                print(data.shape)
                 padded_data = np.zeros((max_npts))
                 padded_data[:data.shape[0]] = data
                 data = padded_data
