@@ -10,7 +10,7 @@ from skimage import transform as sktrans
 
 
 def parameterize_image_coordinates(
-    seg_mem: np.array, seg_nuc: np.array, lmax: int, nisos: List
+    seg_mem: np.array, seg_nuc: np.array, lmax: int, nisos: List, use_prog_sampling: bool = False
 ):
 
     """
@@ -68,6 +68,7 @@ def parameterize_image_coordinates(
         coeffs_nuc=coeffs_nuc,
         centroid_nuc=centroid_nuc,
         nisos=nisos,
+        use_prog_sampling=use_prog_sampling
     )
 
     # Shift coordinates to the center of the input
@@ -228,6 +229,7 @@ def get_mapping_coordinates(
     coeffs_nuc: Dict,
     centroid_nuc: List,
     nisos: List,
+    use_prog_sampling: bool,
 ):
 
     """
@@ -273,12 +275,38 @@ def get_mapping_coordinates(
         nisos=nisos,
     )
 
+    if use_prog_sampling:
+        idx = 0
+        x = 2
+        y = 3
+        down_map = {}
+        while idx != 65:
+            down_map[idx] = (x,y) 
+            if idx%2 == 0 and idx < 20:
+                x = x+1
+            if idx >= 20:
+                x = x+1
+            if idx%4==0 and (x+1 > y):
+                y = x+1
+            if idx%5 or idx%6:
+                y = y+1
+            if idx == 0:
+                x = 5
+                y = 8
+            idx = idx + 1
+
     x_coords, y_coords, z_coords = [], [], []
     for i, iso_value in enumerate(np.linspace(0.0, 1.0, 1 + np.sum(nisos))):
 
         # Get coeffs at given fixed point
         coeffs = coeffs_interpolator(iso_value).reshape(2, lmax + 1, lmax + 1)
-        mesh, _ = shtools.get_reconstruction_from_coeffs(coeffs, lrec=2 * lmax)
+
+        if not use_prog_sampling:
+            mesh, _ = shtools.get_reconstruction_from_coeffs(coeffs, lrec=2 * lmax)
+        else:
+            grid = shtools.get_grid_from_coeffs(coeffs, lrec=2 * lmax)
+            grid_downsample = sktrans.resize(grid, output_shape=down_map[i], preserve_range=True)
+            mesh = shtools.get_reconstruction_from_grid(grid_downsample)
 
         # Store coordinates
         coords = vtk_to_numpy(mesh.GetPoints().GetData())
