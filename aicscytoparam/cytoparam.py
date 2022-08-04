@@ -439,7 +439,7 @@ def cellular_mapping(
 
         representations.append(rep)
 
-    # Number of points in the mesh
+    # Number of points in the outermost mesh
     max_npts = mesh.GetNumberOfPoints()
 
     # Create a matrix to store the representations
@@ -450,7 +450,8 @@ def cellular_mapping(
     for i, rep in enumerate(representations):
         for ch, (ch_name, data) in enumerate(rep.items()):
             if data.shape[0] != max_npts:
-                padded_data = np.zeros((max_npts))
+                padded_data = np.empty((max_npts))
+                padded_data[:] = np.nan
                 padded_data[:data.shape[0]] = data
                 data = padded_data
             code[ch, 0, i, :] = data
